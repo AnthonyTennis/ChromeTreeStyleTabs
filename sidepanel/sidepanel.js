@@ -10,6 +10,52 @@ let keyboardFocusId = null;
 let lastActiveTabId = null;
 let dragTabId = null;
 
+const dropIndicatorEl = document.createElement("div");
+dropIndicatorEl.className = "drop-indicator";
+
+function idxOf(nodeId) {
+  return currentSnapshot.nodes.findIndex((n) => n.id === nodeId);
+}
+
+// The next node in the flat, pre-order-DFS node list — i.e. the position
+// right after `nodeId` but before any of its children. That's exactly
+// where a dropped tab needs to land to become `nodeId`'s new first child.
+function firstFollowingId(nodeId) {
+  const idx = idxOf(nodeId);
+  if (idx === -1) return null;
+  return idx + 1 < currentSnapshot.nodes.length ? currentSnapshot.nodes[idx + 1].id : null;
+}
+
+// The next node at the same depth-or-shallower as `nodeId` — i.e. the
+// position right after `nodeId`'s entire subtree. That's where a dropped
+// tab needs to land to become `nodeId`'s next sibling.
+function nextSiblingBoundaryId(nodeId) {
+  const idx = idxOf(nodeId);
+  if (idx === -1) return null;
+  const depth = currentSnapshot.nodes[idx].depth;
+  let i = idx + 1;
+  while (i < currentSnapshot.nodes.length && currentSnapshot.nodes[i].depth > depth) i++;
+  return i < currentSnapshot.nodes.length ? currentSnapshot.nodes[i].id : null;
+}
+
+function positionIndicator(targetEl, edge, depth) {
+  const treeRect = treeEl.getBoundingClientRect();
+  const rect = targetEl.getBoundingClientRect();
+  const top = (edge === "above" ? rect.top : rect.bottom) - treeRect.top + treeEl.scrollTop;
+  dropIndicatorEl.style.top = `${top}px`;
+  dropIndicatorEl.style.left = `${8 + depth * 16}px`;
+  dropIndicatorEl.style.display = "block";
+}
+
+function hideIndicator() {
+  dropIndicatorEl.style.display = "none";
+}
+
+function clearDragMarkers() {
+  treeEl.querySelectorAll(".drag-over-child").forEach((n) => n.classList.remove("drag-over-child"));
+  hideIndicator();
+}
+
 function faviconUrl(pageUrl) {
   const url = new URL(chrome.runtime.getURL("/_favicon/"));
   url.searchParams.set("pageUrl", pageUrl || "");
@@ -117,6 +163,9 @@ function render(snapshot) {
     }
     treeEl.appendChild(renderNode(node));
   }
+
+  treeEl.appendChild(dropIndicatorEl);
+  hideIndicator();
 
   if (keyboardFocusId != null) {
     const el = treeEl.querySelector(`[data-tab-id="${keyboardFocusId}"]`);
@@ -238,40 +287,39 @@ function renderNode(node) {
   el.addEventListener("dragover", (e) => {
     e.preventDefault();
     if (dragTabId == null || dragTabId === node.id) return;
-    clearDragMarkers();
     const rect = el.getBoundingClientRect();
     const ratio = (e.clientY - rect.top) / rect.height;
-    if (ratio < 0.25) el.classList.add("drag-over-above");
-    else if (ratio > 0.75) el.classList.add("drag-over-below");
-    else el.classList.add("drag-over-child");
+    treeEl.querySelectorAll(".drag-over-child").forEach((n) => n.classList.remove("drag-over-child"));
+    if (ratio < 0.25) {
+      positionIndicator(el, "above", node.depth);
+    } else if (ratio > 0.75) {
+      positionIndicator(el, "below", node.depth);
+    } else {
+      el.classList.add("drag-over-child");
+      hideIndicator();
+    }
   });
   el.addEventListener("drop", (e) => {
     e.preventDefault();
     if (dragTabId == null || dragTabId === node.id) return;
     const rect = el.getBoundingClientRect();
     const ratio = (e.clientY - rect.top) / rect.height;
-    let newParentId, beforeSiblingId;
+    let newParentId, insertBeforeId;
     if (ratio < 0.25) {
       newParentId = node.parentId;
-      beforeSiblingId = node.id;
+      insertBeforeId = node.id;
     } else if (ratio > 0.75) {
       newParentId = node.parentId;
-      beforeSiblingId = null;
+      insertBeforeId = nextSiblingBoundaryId(node.id);
     } else {
       newParentId = node.id;
-      beforeSiblingId = null;
+      insertBeforeId = firstFollowingId(node.id);
     }
-    send({ type: "MOVE_NODE", tabId: dragTabId, newParentId, beforeSiblingId });
+    send({ type: "MOVE_NODE", tabId: dragTabId, newParentId, insertBeforeId });
     clearDragMarkers();
   });
 
   return el;
-}
-
-function clearDragMarkers() {
-  treeEl.querySelectorAll(".drag-over-above, .drag-over-below, .drag-over-child").forEach((n) => {
-    n.classList.remove("drag-over-above", "drag-over-below", "drag-over-child");
-  });
 }
 
 function countDescendants(rootId) {
@@ -291,14 +339,18 @@ function countDescendants(rootId) {
   return count;
 }
 
-// Allow dropping onto the tree background (below the last item) to un-nest to root.
+// Allow dropping onto the tree background (below the last item) to un-nest
+// to root and land at the very end of the tab strip.
 treeEl.addEventListener("dragover", (e) => {
-  if (e.target === treeEl) e.preventDefault();
+  if (e.target === treeEl) {
+    e.preventDefault();
+    clearDragMarkers();
+  }
 });
 treeEl.addEventListener("drop", (e) => {
   if (e.target !== treeEl) return;
   if (dragTabId == null) return;
-  send({ type: "MOVE_NODE", tabId: dragTabId, newParentId: null, beforeSiblingId: null });
+  send({ type: "MOVE_NODE", tabId: dragTabId, newParentId: null, insertBeforeId: null });
 });
 
 function visibleNodesInOrder() {

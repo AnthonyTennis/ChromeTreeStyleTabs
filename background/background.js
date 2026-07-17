@@ -154,7 +154,7 @@ async function subtreeIdsInDfsOrder(windowId, rootTabId) {
   return { out, byId };
 }
 
-async function reparentTab(windowId, tabId, newParentId, beforeSiblingId) {
+async function reparentTab(windowId, tabId, newParentId, insertBeforeId) {
   if (newParentId === tabId) return;
   if (newParentId != null && isDescendant(windowId, newParentId, tabId)) return;
 
@@ -163,11 +163,15 @@ async function reparentTab(windowId, tabId, newParentId, beforeSiblingId) {
 
   const { out: subtree, byId } = await subtreeIdsInDfsOrder(windowId, tabId);
 
+  // insertBeforeId (computed client-side from the flat, depth-aware node
+  // list) pins the exact drop position and always wins when present — it's
+  // what makes reordering within a nested level land in the right spot
+  // instead of always snapping to "first child of the parent."
   let targetIndex;
-  if (newParentId != null && byId.has(newParentId)) {
+  if (insertBeforeId != null && byId.has(insertBeforeId) && !subtree.includes(insertBeforeId)) {
+    targetIndex = byId.get(insertBeforeId).index;
+  } else if (newParentId != null && byId.has(newParentId)) {
     targetIndex = byId.get(newParentId).index + 1;
-  } else if (beforeSiblingId != null && byId.has(beforeSiblingId)) {
-    targetIndex = byId.get(beforeSiblingId).index;
   } else {
     targetIndex = -1;
   }
@@ -218,7 +222,7 @@ chrome.runtime.onConnect.addListener((port) => {
           break;
         }
         case "MOVE_NODE": {
-          await reparentTab(entry.windowId, msg.tabId, msg.newParentId, msg.beforeSiblingId);
+          await reparentTab(entry.windowId, msg.tabId, msg.newParentId, msg.insertBeforeId);
           break;
         }
         case "NEW_CHILD_TAB": {
@@ -255,7 +259,12 @@ chrome.runtime.onConnect.addListener((port) => {
 chrome.tabs.onCreated.addListener(async (tab) => {
   await loadWindowState(tab.windowId);
   const opener = tab.openerTabId;
-  if (opener != null) {
+  // Only auto-nest tabs that open in the background (middle-click, ctrl-click,
+  // "open link in new tab", etc). A tab that opens in the foreground — the
+  // new-tab button, ctrl+T, a plain link click — is a deliberate new tab, not
+  // a spin-off of the current one, so it stays at the root. Explicit nesting
+  // for those still works via drag-and-drop or the per-row "new child" button.
+  if (opener != null && !tab.active) {
     try {
       const openerTab = await chrome.tabs.get(opener);
       if (openerTab.windowId === tab.windowId) {
