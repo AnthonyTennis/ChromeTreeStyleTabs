@@ -8,7 +8,9 @@ let currentSnapshot = { pinned: [], nodes: [], groups: [] };
 let filterText = "";
 let keyboardFocusId = null;
 let lastActiveTabId = null;
-let dragTabId = null;
+let dragIds = [];
+let selectedIds = new Set();
+let selectionAnchorId = null;
 
 const dropIndicatorEl = document.createElement("div");
 dropIndicatorEl.className = "drop-indicator";
@@ -54,6 +56,31 @@ function hideIndicator() {
 function clearDragMarkers() {
   treeEl.querySelectorAll(".drag-over-child").forEach((n) => n.classList.remove("drag-over-child"));
   hideIndicator();
+}
+
+// True if nodeId is one of the dragged tabs, or a descendant of one — such
+// nodes can't be a valid drop target since they're moving along with the drag.
+function isWithinDragSelection(nodeId) {
+  if (dragIds.length === 0) return false;
+  const byId = new Map(currentSnapshot.nodes.map((n) => [n.id, n]));
+  let cur = nodeId;
+  const seen = new Set();
+  while (cur != null) {
+    if (dragIds.includes(cur)) return true;
+    if (seen.has(cur)) break;
+    seen.add(cur);
+    const n = byId.get(cur);
+    cur = n ? n.parentId : null;
+  }
+  return false;
+}
+
+function sendMove(newParentId, insertBeforeId) {
+  if (dragIds.length === 1) {
+    send({ type: "MOVE_NODE", tabId: dragIds[0], newParentId, insertBeforeId });
+  } else if (dragIds.length > 1) {
+    send({ type: "MOVE_NODES", tabIds: dragIds, newParentId, insertBeforeId });
+  }
 }
 
 function faviconUrl(pageUrl) {
@@ -121,6 +148,11 @@ function render(snapshot) {
     keyboardFocusId = activeNode.id;
   }
   lastActiveTabId = activeNode ? activeNode.id : lastActiveTabId;
+
+  const liveIds = new Set(snapshot.nodes.map((n) => n.id));
+  for (const id of [...selectedIds]) {
+    if (!liveIds.has(id)) selectedIds.delete(id);
+  }
 
   pinnedRowEl.innerHTML = "";
   for (const t of snapshot.pinned) {
@@ -196,6 +228,7 @@ function renderNode(node) {
   el.draggable = true;
   if (node.active) el.classList.add("active");
   if (node.collapsed) el.classList.add("collapsed");
+  if (selectedIds.has(node.id)) el.classList.add("selected");
   if (node.filteredOut) el.classList.add("filtered-out");
   if (node.status === "loading") el.classList.add("loading");
   if (node.audible) el.classList.add("audible", "always-show");
@@ -268,25 +301,56 @@ function renderNode(node) {
   });
   el.appendChild(closeBtn);
 
-  el.addEventListener("click", () => {
+  el.addEventListener("click", (e) => {
+    if (e.shiftKey) {
+      const visible = visibleNodesInOrder();
+      const anchorIdx = visible.findIndex((n) => n.id === selectionAnchorId);
+      const clickedIdx = visible.findIndex((n) => n.id === node.id);
+      if (anchorIdx !== -1 && clickedIdx !== -1) {
+        const [lo, hi] = anchorIdx < clickedIdx ? [anchorIdx, clickedIdx] : [clickedIdx, anchorIdx];
+        selectedIds = new Set(visible.slice(lo, hi + 1).map((n) => n.id));
+      } else {
+        selectedIds = new Set([node.id]);
+        selectionAnchorId = node.id;
+      }
+      keyboardFocusId = node.id;
+      render(currentSnapshot);
+      return;
+    }
+    if (e.ctrlKey || e.metaKey) {
+      if (selectedIds.has(node.id)) selectedIds.delete(node.id);
+      else selectedIds.add(node.id);
+      selectionAnchorId = node.id;
+      keyboardFocusId = node.id;
+      render(currentSnapshot);
+      return;
+    }
+    selectedIds = new Set();
+    selectionAnchorId = node.id;
     keyboardFocusId = node.id;
     send({ type: "ACTIVATE_TAB", tabId: node.id });
   });
 
   el.addEventListener("dragstart", (e) => {
-    dragTabId = node.id;
-    el.classList.add("dragging");
+    dragIds =
+      selectedIds.has(node.id) && selectedIds.size > 1
+        ? currentSnapshot.nodes.filter((n) => selectedIds.has(n.id)).map((n) => n.id)
+        : [node.id];
+    for (const id of dragIds) {
+      const dEl = treeEl.querySelector(`[data-tab-id="${id}"]`);
+      if (dEl) dEl.classList.add("dragging");
+    }
     e.dataTransfer.effectAllowed = "move";
     e.dataTransfer.setData("text/plain", String(node.id));
   });
   el.addEventListener("dragend", () => {
-    el.classList.remove("dragging");
-    dragTabId = null;
+    treeEl.querySelectorAll(".dragging").forEach((n) => n.classList.remove("dragging"));
+    dragIds = [];
     clearDragMarkers();
   });
   el.addEventListener("dragover", (e) => {
     e.preventDefault();
-    if (dragTabId == null || dragTabId === node.id) return;
+    if (dragIds.length === 0 || isWithinDragSelection(node.id)) return;
     const rect = el.getBoundingClientRect();
     const ratio = (e.clientY - rect.top) / rect.height;
     treeEl.querySelectorAll(".drag-over-child").forEach((n) => n.classList.remove("drag-over-child"));
@@ -301,7 +365,7 @@ function renderNode(node) {
   });
   el.addEventListener("drop", (e) => {
     e.preventDefault();
-    if (dragTabId == null || dragTabId === node.id) return;
+    if (dragIds.length === 0 || isWithinDragSelection(node.id)) return;
     const rect = el.getBoundingClientRect();
     const ratio = (e.clientY - rect.top) / rect.height;
     let newParentId, insertBeforeId;
@@ -315,7 +379,7 @@ function renderNode(node) {
       newParentId = node.id;
       insertBeforeId = firstFollowingId(node.id);
     }
-    send({ type: "MOVE_NODE", tabId: dragTabId, newParentId, insertBeforeId });
+    sendMove(newParentId, insertBeforeId);
     clearDragMarkers();
   });
 
@@ -349,8 +413,15 @@ treeEl.addEventListener("dragover", (e) => {
 });
 treeEl.addEventListener("drop", (e) => {
   if (e.target !== treeEl) return;
-  if (dragTabId == null) return;
-  send({ type: "MOVE_NODE", tabId: dragTabId, newParentId: null, insertBeforeId: null });
+  if (dragIds.length === 0) return;
+  sendMove(null, null);
+});
+
+treeEl.addEventListener("click", (e) => {
+  if (e.target === treeEl && selectedIds.size > 0) {
+    selectedIds = new Set();
+    render(currentSnapshot);
+  }
 });
 
 function visibleNodesInOrder() {
@@ -402,6 +473,10 @@ treeEl.addEventListener("keydown", (e) => {
   } else if (e.key === "/") {
     e.preventDefault();
     filterInput.focus();
+  } else if (e.key === "Escape" && selectedIds.size > 0) {
+    e.preventDefault();
+    selectedIds = new Set();
+    render(currentSnapshot);
   }
 });
 

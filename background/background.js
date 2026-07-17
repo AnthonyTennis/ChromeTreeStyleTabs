@@ -154,7 +154,7 @@ async function subtreeIdsInDfsOrder(windowId, rootTabId) {
   return { out, byId };
 }
 
-async function reparentTab(windowId, tabId, newParentId, insertBeforeId) {
+async function reparentOne(windowId, tabId, newParentId, insertBeforeId) {
   if (newParentId === tabId) return;
   if (newParentId != null && isDescendant(windowId, newParentId, tabId)) return;
 
@@ -180,6 +180,33 @@ async function reparentTab(windowId, tabId, newParentId, insertBeforeId) {
     await chrome.tabs.move(subtree, { index: targetIndex });
   } catch (e) {
     // ignore — e.g. moving across pinned boundary
+  }
+}
+
+async function reparentTab(windowId, tabId, newParentId, insertBeforeId) {
+  await reparentOne(windowId, tabId, newParentId, insertBeforeId);
+  scheduleBroadcast(windowId);
+}
+
+// Moves an explicit multi-selection as a unit. Only "selection roots" — tabs
+// whose current parent isn't also in the selection — are individually
+// reparented; a selected tab whose parent is also selected simply rides
+// along with that parent's subtree, exactly like a normal single-tab move.
+// Roots are inserted in reverse so each one lands immediately before the
+// previously-placed one, preserving the original relative order right
+// before the target insertion point.
+async function reparentMultiple(windowId, tabIds, newParentId, insertBeforeId) {
+  const idSet = new Set(tabIds);
+  const parents = getParentMap(windowId);
+  const roots = tabIds.filter((id) => {
+    const p = parents.has(id) ? parents.get(id) : null;
+    return p == null || !idSet.has(p);
+  });
+
+  let cursor = insertBeforeId;
+  for (const rootId of [...roots].reverse()) {
+    await reparentOne(windowId, rootId, newParentId, cursor);
+    cursor = rootId;
   }
   scheduleBroadcast(windowId);
 }
@@ -223,6 +250,10 @@ chrome.runtime.onConnect.addListener((port) => {
         }
         case "MOVE_NODE": {
           await reparentTab(entry.windowId, msg.tabId, msg.newParentId, msg.insertBeforeId);
+          break;
+        }
+        case "MOVE_NODES": {
+          await reparentMultiple(entry.windowId, msg.tabIds, msg.newParentId, msg.insertBeforeId);
           break;
         }
         case "NEW_CHILD_TAB": {

@@ -224,6 +224,21 @@ body {
   outline: none;
 }
 
+.node.selected {
+  background: color-mix(in srgb, var(--accent) 16%, var(--box));
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+}
+
+.node.selected.active {
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--accent) 40%, var(--box-active)) 0%,
+    color-mix(in srgb, var(--accent) 16%, var(--box-active)) 45%,
+    transparent 100%
+  );
+}
+
 .node.drag-over-child {
   background: var(--accent-dim);
 }
