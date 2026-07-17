@@ -247,8 +247,8 @@ body {
   transition: transform 100ms ease;
 }
 
-.node.collapsed .twisty svg {
-  transform: rotate(-90deg);
+.node:not(.collapsed) .twisty svg {
+  transform: rotate(90deg);
 }
 
 .twisty.spacer {
