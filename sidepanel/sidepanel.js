@@ -7,6 +7,7 @@ let port = null;
 let currentSnapshot = { pinned: [], nodes: [], groups: [] };
 let filterText = "";
 let keyboardFocusId = null;
+let lastActiveTabId = null;
 let dragTabId = null;
 
 function faviconUrl(pageUrl) {
@@ -68,6 +69,12 @@ function computeVisibility(nodes) {
 
 function render(snapshot) {
   currentSnapshot = snapshot;
+
+  const activeNode = snapshot.nodes.find((n) => n.active);
+  if (activeNode && activeNode.id !== lastActiveTabId) {
+    keyboardFocusId = activeNode.id;
+  }
+  lastActiveTabId = activeNode ? activeNode.id : lastActiveTabId;
 
   pinnedRowEl.innerHTML = "";
   for (const t of snapshot.pinned) {
