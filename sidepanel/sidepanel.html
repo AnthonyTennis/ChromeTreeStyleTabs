@@ -1,0 +1,31 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Tree Style Tabs</title>
+    <link rel="stylesheet" href="sidepanel.css" />
+  </head>
+  <body>
+    <div id="app">
+      <header id="toolbar">
+        <div class="brand">
+          <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
+            <rect x="1" y="1" width="6" height="4" fill="currentColor" opacity="0.55" />
+            <rect x="8" y="6" width="6" height="4" fill="currentColor" />
+            <rect x="8" y="11" width="6" height="4" fill="currentColor" />
+            <path d="M4 5 V8 H8" stroke="currentColor" stroke-width="1" fill="none" opacity="0.55" />
+            <path d="M4 5 V13 H8" stroke="currentColor" stroke-width="1" fill="none" opacity="0.55" />
+          </svg>
+          <span>Tree Style Tabs</span>
+        </div>
+        <button id="newTabBtn" title="New tab" aria-label="New tab">+</button>
+      </header>
+      <div id="filterBar">
+        <input id="filterInput" type="text" placeholder="Filter tabs… (/)" autocomplete="off" spellcheck="false" />
+      </div>
+      <div id="pinnedRow" aria-label="Pinned tabs"></div>
+      <div id="tree" tabindex="0"></div>
+    </div>
+    <script src="sidepanel.js" type="module"></script>
+  </body>
+</html>
