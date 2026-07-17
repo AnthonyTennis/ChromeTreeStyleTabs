@@ -197,6 +197,10 @@ body {
   outline-offset: -2px;
 }
 
+.node.active.keyboard-focus {
+  outline: none;
+}
+
 .node.drag-over-child {
   background: var(--accent-dim);
 }
