@@ -259,12 +259,13 @@ chrome.runtime.onConnect.addListener((port) => {
 chrome.tabs.onCreated.addListener(async (tab) => {
   await loadWindowState(tab.windowId);
   const opener = tab.openerTabId;
-  // Only auto-nest tabs that open in the background (middle-click, ctrl-click,
-  // "open link in new tab", etc). A tab that opens in the foreground — the
-  // new-tab button, ctrl+T, a plain link click — is a deliberate new tab, not
-  // a spin-off of the current one, so it stays at the root. Explicit nesting
-  // for those still works via drag-and-drop or the per-row "new child" button.
-  if (opener != null && !tab.active) {
+  // Chrome only sets openerTabId when a tab is spawned from within a page's
+  // context — a link click, window.open(), "open link in new tab" — never
+  // for the new-tab button or ctrl+T, which are chrome-initiated rather than
+  // page-initiated. So any tab with an opener genuinely came from the
+  // current tab and should nest under it, whether it opens in the
+  // foreground or background.
+  if (opener != null) {
     try {
       const openerTab = await chrome.tabs.get(opener);
       if (openerTab.windowId === tab.windowId) {
