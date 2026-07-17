@@ -158,8 +158,8 @@ body {
   position: relative;
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 6px 8px;
+  gap: 4px;
+  padding: 6px 8px 6px 4px;
   margin: 2px 0;
   margin-left: calc(var(--depth) * 16px);
   background: var(--box);
@@ -179,7 +179,12 @@ body {
 }
 
 .node.active {
-  background: var(--box-active);
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--accent) 30%, var(--box-active)) 0%,
+    var(--box-active) 45%,
+    transparent 100%
+  );
   border-left-color: var(--accent);
 }
 
