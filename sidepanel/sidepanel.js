@@ -83,6 +83,31 @@ function sendMove(newParentId, insertBeforeId) {
   }
 }
 
+// If targetId is part of the current multi-selection, a single-tab command
+// (close, reload, ...) fans out to the whole selection instead of just the
+// one tab it was invoked on.
+function idsForCommand(targetId) {
+  return selectedIds.has(targetId) && selectedIds.size > 1 ? [...selectedIds] : [targetId];
+}
+
+function sendClose(targetId, closeChildren) {
+  const ids = idsForCommand(targetId);
+  if (ids.length === 1) {
+    send({ type: "CLOSE_TAB", tabId: ids[0], closeChildren });
+  } else {
+    send({ type: "CLOSE_TABS", tabIds: ids, closeChildren });
+  }
+}
+
+function sendReload(targetId) {
+  const ids = idsForCommand(targetId);
+  if (ids.length === 1) {
+    send({ type: "RELOAD_TAB", tabId: ids[0] });
+  } else {
+    send({ type: "RELOAD_TABS", tabIds: ids });
+  }
+}
+
 function faviconUrl(pageUrl) {
   const url = new URL(chrome.runtime.getURL("/_favicon/"));
   url.searchParams.set("pageUrl", pageUrl || "");
@@ -297,7 +322,7 @@ function renderNode(node) {
   closeBtn.title = "Close tab";
   closeBtn.addEventListener("click", (e) => {
     e.stopPropagation();
-    send({ type: "CLOSE_TAB", tabId: node.id, closeChildren: e.shiftKey });
+    sendClose(node.id, e.shiftKey);
   });
   el.appendChild(closeBtn);
 
@@ -468,7 +493,7 @@ treeEl.addEventListener("keydown", (e) => {
   } else if (e.key === "Backspace" || e.key === "Delete") {
     e.preventDefault();
     if (keyboardFocusId != null) {
-      send({ type: "CLOSE_TAB", tabId: keyboardFocusId, closeChildren: e.shiftKey });
+      sendClose(keyboardFocusId, e.shiftKey);
     }
   } else if (e.key === "/") {
     e.preventDefault();
@@ -504,9 +529,23 @@ filterInput.addEventListener("keydown", (e) => {
 });
 
 document.addEventListener("keydown", (e) => {
-  if (e.key === "/" && document.activeElement !== filterInput) {
+  if (document.activeElement === filterInput) return;
+  if (e.key === "/") {
     e.preventDefault();
     filterInput.focus();
+    return;
+  }
+  // Chrome may intercept these as browser-chrome shortcuts before they ever
+  // reach the panel, depending on focus — but when they do land here, honor
+  // them the same way the row buttons and Backspace/Delete already do:
+  // fan out to the whole multi-selection when the target tab is part of one.
+  const key = e.key.toLowerCase();
+  if ((e.ctrlKey || e.metaKey) && key === "w" && keyboardFocusId != null) {
+    e.preventDefault();
+    sendClose(keyboardFocusId, e.shiftKey);
+  } else if ((e.ctrlKey || e.metaKey) && key === "r" && keyboardFocusId != null) {
+    e.preventDefault();
+    sendReload(keyboardFocusId);
   }
 });
 

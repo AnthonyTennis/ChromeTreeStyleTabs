@@ -220,6 +220,28 @@ async function closeTabAndMaybeChildren(windowId, tabId, closeChildren) {
   }
 }
 
+async function closeMultiple(windowId, tabIds, closeChildren) {
+  let idsToRemove;
+  if (closeChildren) {
+    const set = new Set();
+    for (const id of tabIds) {
+      const { out } = await subtreeIdsInDfsOrder(windowId, id);
+      for (const x of out) set.add(x);
+    }
+    idsToRemove = [...set];
+  } else {
+    // Close exactly the tabs that were explicitly selected — no subtree
+    // expansion — so a selected parent and a separately-selected child both
+    // close, regardless of the parent/child relationship between them.
+    idsToRemove = [...new Set(tabIds)];
+  }
+  try {
+    await chrome.tabs.remove(idsToRemove);
+  } catch (e) {
+    // some ids may already be gone if subtrees overlapped
+  }
+}
+
 chrome.runtime.onConnect.addListener((port) => {
   if (port.name !== "sidepanel") return;
   const entry = { port, windowId: null };
@@ -240,6 +262,18 @@ chrome.runtime.onConnect.addListener((port) => {
         }
         case "CLOSE_TAB": {
           await closeTabAndMaybeChildren(entry.windowId, msg.tabId, !!msg.closeChildren);
+          break;
+        }
+        case "CLOSE_TABS": {
+          await closeMultiple(entry.windowId, msg.tabIds, !!msg.closeChildren);
+          break;
+        }
+        case "RELOAD_TAB": {
+          await chrome.tabs.reload(msg.tabId);
+          break;
+        }
+        case "RELOAD_TABS": {
+          await Promise.all(msg.tabIds.map((id) => chrome.tabs.reload(id).catch(() => {})));
           break;
         }
         case "TOGGLE_COLLAPSE": {
@@ -287,16 +321,21 @@ chrome.runtime.onConnect.addListener((port) => {
   });
 });
 
+// Chrome sets openerTabId even for tabs opened via ctrl+T / the new-tab
+// button — pointing at whatever tab was active — so opener presence alone
+// can't distinguish "spawned from this page" from "just a fresh blank tab."
+// A blank tab lands on the New Tab Page, though, while a page-spawned tab
+// always carries a real destination URL, so that's the signal we key on.
+const BLANK_NEW_TAB_URLS = new Set(["chrome://newtab/", "chrome-search://local-ntp/local-ntp.html", "", undefined]);
+
+function isBlankNewTab(tab) {
+  return BLANK_NEW_TAB_URLS.has(tab.pendingUrl) && BLANK_NEW_TAB_URLS.has(tab.url);
+}
+
 chrome.tabs.onCreated.addListener(async (tab) => {
   await loadWindowState(tab.windowId);
   const opener = tab.openerTabId;
-  // Chrome only sets openerTabId when a tab is spawned from within a page's
-  // context — a link click, window.open(), "open link in new tab" — never
-  // for the new-tab button or ctrl+T, which are chrome-initiated rather than
-  // page-initiated. So any tab with an opener genuinely came from the
-  // current tab and should nest under it, whether it opens in the
-  // foreground or background.
-  if (opener != null) {
+  if (opener != null && !isBlankNewTab(tab)) {
     try {
       const openerTab = await chrome.tabs.get(opener);
       if (openerTab.windowId === tab.windowId) {
